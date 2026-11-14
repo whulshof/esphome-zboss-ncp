@@ -20,9 +20,10 @@ static const char *const TAG = "zboss_ncp";
 static std::atomic<bool> s_network_up{false};
 static ZbossNcpComponent *s_instance = nullptr;
 
-// Upstream ran app_main() on the 8 KB main task; same stack here.
+// Upstream ran app_main() on the 8 KB main task (priority 1); same here. The
+// ZBOSS task runs at 5 and must stay above this one.
 static constexpr uint32_t NCP_TASK_STACK = 8192;
-static constexpr UBaseType_t NCP_TASK_PRIORITY = 5;
+static constexpr UBaseType_t NCP_TASK_PRIORITY = 1;
 
 bool ZbossNcpComponent::network_up_hook_() { return s_network_up.load(std::memory_order_relaxed); }
 

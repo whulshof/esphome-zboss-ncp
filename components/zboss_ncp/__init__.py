@@ -10,7 +10,7 @@ from pathlib import Path
 
 from esphome import pins
 import esphome.codegen as cg
-from esphome.components import binary_sensor, sensor, text_sensor
+from esphome.components import binary_sensor, sensor, socket, text_sensor
 from esphome.components.esp32 import (
     VARIANT_ESP32C5,
     VARIANT_ESP32C6,
@@ -113,6 +113,11 @@ CONFIG_SCHEMA = cv.All(
     ).extend(cv.polling_component_schema("10s")),
     cv.only_on_esp32,
     only_on_variant(supported=[VARIANT_ESP32C6, VARIANT_ESP32C5]),
+    # The NCP's TCP server: one listener, the active host and a pending one
+    # (a reconnecting host is accepted next to a half-open old session).
+    # ESPHome sizes lwIP's socket pool from these registrations.
+    socket.consume_sockets(2, "zboss_ncp"),
+    socket.consume_sockets(1, "zboss_ncp", socket.SocketType.TCP_LISTEN),
 )
 
 

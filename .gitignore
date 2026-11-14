@@ -2,3 +2,4 @@ example/secrets.yaml
 .esphome/
 example/.esphome/
 __pycache__/
+backups/
