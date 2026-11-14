@@ -1,0 +1,172 @@
+menu "Zigbee Network Co-processor"
+
+    config NCP_BUS_MODE_USB
+        bool "Host connection via USB-Serial/JTAG"
+        default y
+        help
+            The primary NCP host link is USB-Serial/JTAG. (The stock ZBOSS NCP
+            UART transport was never implemented in this firmware; the former
+            UART Kconfig options (NCP_BUS_UART_*) and transport::m_uart_queue
+            were dead and removed in code-review TRNPT-4. NCP_UART_TRANSPORT
+            below is an independent, parallel implementation.)
+
+    config NCP_UART_TRANSPORT
+        bool "Additional NCP host link on UART1 (parallel to USB)"
+        default y
+        help
+            Expose the same ZBOSS NCP frame stream on UART1 in parallel to
+            USB-Serial/JTAG, for hosts like OpenWRT routers with a TTL serial
+            header (issue #2 / discussion #1). 8N1, no flow control.
+
+            NCP->host frames follow the interface that last delivered host
+            bytes; running two talking hosts at the same time is not
+            supported (single NCP link-layer state). An idle or unserviced
+            interface never blocks the active one: writes to the non-active
+            interface are strictly non-blocking and are dropped when its TX
+            buffer is full.
+
+    if NCP_UART_TRANSPORT
+
+        config NCP_UART_TX_GPIO
+            int "UART TX GPIO"
+            default 23 if IDF_TARGET_ESP32C5
+            default 22
+            range 0 28
+            help
+                ESP32-C6 default GPIO22 — exposed as D4 on the Seeed XIAO
+                ESP32-C6 and a plain SDIO_DATA2 pad (SDIO slave unused by this
+                firmware) on devkits/bare modules. Pin constraints when
+                changing: avoid GPIO8/9 (boot mode straps), GPIO15 (JTAG source
+                strap), GPIO12/13 (USB D-/D+), GPIO16/17 (UART0: the ROM
+                bootloader prints a reset banner there on every reset). GPIO4/5
+                work on bare modules (their MTMS/MTDI strap only selects the
+                unused SDIO clock edge) but are not bonded out on the XIAO.
+
+                ESP32-C5 default GPIO23. On the C5 the USB-Serial/JTAG pins are
+                GPIO13/14, the SPI flash uses GPIO16–22, and GPIO11/12 are the
+                UART0 console — so the C6 default (22) would sit on flash.
+                GPIO23/24 are free general-purpose pins; avoid GPIO2/7/25/27/28
+                (straps) and GPIO0/1 (optional 32 kHz crystal).
+
+        config NCP_UART_RX_GPIO
+            int "UART RX GPIO"
+            default 24 if IDF_TARGET_ESP32C5
+            default 23
+            range 0 28
+            help
+                ESP32-C6 default GPIO23 — exposed as D5 on the Seeed XIAO
+                ESP32-C6, plain SDIO_DATA3 pad elsewhere. ESP32-C5 default
+                GPIO24 (GPIO23's neighbour, also free). See NCP_UART_TX_GPIO
+                for the per-target pin constraints. The firmware enables the
+                internal pull-up so an unwired RX idles quietly instead of
+                feeding noise into the NCP stream.
+
+        config NCP_UART_BAUD
+            int "UART baud rate"
+            default 115200
+            range 9600 921600
+            help
+                Must match the host side (zigbee2mqtt adapter baudrate /
+                ser2net config). 115200 is the zigbee-herdsman and
+                zigpy-zboss default.
+
+    endif
+
+    config NCP_XIAO_EXT_ANTENNA
+        bool "Seeed XIAO ESP32-C6: use the external (U.FL) antenna"
+        depends on IDF_TARGET_ESP32C6
+        default n
+        help
+            The XIAO ESP32-C6 routes RF through a switch controlled by two
+            dedicated GPIOs (not on the pin header): GPIO3 enables the switch
+            control (active low), GPIO14 selects the antenna (low = internal
+            ceramic, default; high = external U.FL). With this option the
+            firmware drives GPIO3 low and GPIO14 high at boot, selecting the
+            external antenna. Leave disabled on any other board — it would
+            drive two header GPIOs to fixed levels. Source: Seeed wiki
+            "XIAO ESP32C6 Getting Started" + arduino-esp32
+            variants/XIAO_ESP32C6/pins_arduino.h (WIFI_ENABLE/WIFI_ANT_CONFIG).
+
+    config NCP_TCP_PORT
+        int "NCP TCP server port (wifi-coex Mode B)"
+        default 6638
+        help
+            TCP port the NCP frame stream is served on once the device has WiFi
+            STA credentials (Mode B / wifi-coex variant). Z2M connects with
+            port: tcp://<ip-or-mdns-host>:<port>. 6638 matches the de-facto
+            serial-over-TCP Zigbee-coordinator port (SLZB/Tube/ZigStar).
+
+endmenu
+
+menu "Zigbee"
+
+    config ZB_ENABLED
+        bool "Zigbee Enable"
+        default n
+        help
+            Select this option to enable Zigbee and show the submenu with Zigbee configuration choices.
+
+    choice ZB_DEVICE_TYPE
+        prompt "Configure the Zigbee device type"
+        depends on ZB_ENABLED
+        default ZB_ZCZR
+        help
+            Configure the Zigbee device type
+
+        config ZB_ZCZR
+            bool "Zigbee Coordinator or Router device"
+            help
+                Select this to enable Zigbee Coordinator or Router.
+
+        config ZB_ZED
+            bool "Zigbee End Device"
+            help
+                Select this to enable Zigbee End Device.
+
+        config ZB_ZGPD
+            depends on SOC_IEEE802154_SUPPORTED
+            bool "Zigbee Green power device"
+            help
+                Select this to enable Zigbee Green Power Device.
+
+    endchoice
+
+    choice ZB_RADIO_TYPE
+        prompt "Configure the Zigbee radio type"
+        depends on ZB_ENABLED
+        default ZB_RADIO_NATIVE if SOC_IEEE802154_SUPPORTED
+        default ZB_RADIO_SPINEL_UART
+
+        config ZB_RADIO_NATIVE
+            bool "Native 15.4 radio"
+            help
+                Select this to use the native 15.4 radio.
+
+        config ZB_RADIO_SPINEL_UART
+            bool "Connect to 15.4 radio via Radio Spinel UART"
+            select OPENTHREAD_SPINEL_ONLY
+            help
+                Select this to connect to a Radio Co-Processor via Spinel UART.
+    endchoice
+
+    menu "Zigbee Example"
+        depends on ZB_ENABLED
+
+        config ZB_GP_ENABLED
+            depends on (ZB_ZCZR || ZB_ZGPD) && SOC_IEEE802154_SUPPORTED
+            bool "Zigbee Green Power enable"
+            default y if ZB_ZCZR
+            help
+                when enable green power, example would support as green power proxy(zczr default enabled), green power combo or just green power device.
+
+    endmenu
+
+    config ZB_DEBUG_MODE
+        depends on ZB_ENABLED
+
+        bool "Zigbee Debug Mode"
+        default n
+        help
+            Setting Zigbee stack debug mode.
+
+endmenu
