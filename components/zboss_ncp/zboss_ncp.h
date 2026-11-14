@@ -45,6 +45,7 @@ class ZbossNcpComponent : public PollingComponent {
   static void task_(void *arg);
 
   bool use_wifi_{false};
+  bool coex_reapplied_{false};
   std::vector<AllowedNet> allowed_;
 
   sensor::Sensor *channel_sensor_{nullptr};

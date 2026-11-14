@@ -33,7 +33,26 @@ extern "C" void wifi_coex_enable_radio_coex(void) {
 #endif
 }
 
-extern "C" esp_err_t wifi_coex_start_connect(void) { return ESP_OK; }
+// Upstream starts WiFi here: after the Zigbee stack is up (SKIP_STARTUP) and
+// coexistence is enabled, or straight away in safe mode. ESPHome owns WiFi, so
+// this only raises the flag its setup() waits for (zboss_ncp_radio_ready):
+// starting WiFi while the 802.15.4 radio initialises hangs in wifi_hw_start
+// (task watchdog), which after three boots puts the NCP in safe mode.
+static volatile bool s_radio_ready = false;
+
+extern "C" esp_err_t wifi_coex_start_connect(void) {
+    ESP_LOGI(TAG, "radio ready (WiFi may start)");
+    s_radio_ready = true;
+    return ESP_OK;
+}
+
+extern "C" bool zboss_ncp_radio_ready(void) { return s_radio_ready; }
+
+// ESPHome initialises WiFi after the go-ahead, i.e. after the first
+// esp_coex_wifi_i154_enable(); apply it again once WiFi runs.
+extern "C" void ncp_host_reapply_coex(void) {
+    if (s_radio_ready && !boot_guard::safe_mode()) wifi_coex_enable_radio_coex();
+}
 
 extern "C" bool wifi_coex_is_up(void) {
     return s_hooks.network_up ? s_hooks.network_up() : false;

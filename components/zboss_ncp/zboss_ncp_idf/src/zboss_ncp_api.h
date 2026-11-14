@@ -25,6 +25,13 @@ void ncp_host_set_hooks(const ncp_host_hooks_t* hooks);
 // Does not return while the NCP runs; call it on a task of its own.
 void zboss_ncp_main(void);
 
+// True once the radio may be shared: the Zigbee stack is up and coexistence
+// enabled (or the NCP is in safe mode, without a stack). Start WiFi only then.
+bool zboss_ncp_radio_ready(void);
+
+// Enable WiFi/802.15.4 coexistence again (call once WiFi has started).
+void ncp_host_reapply_coex(void);
+
 // Status for ESPHome sensors (read-only snapshots, safe from any task).
 typedef struct {
     bool     valid;          // stack has published its identity at least once

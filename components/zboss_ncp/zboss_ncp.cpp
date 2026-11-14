@@ -1,5 +1,7 @@
 #include "zboss_ncp.h"
 
+#include "esphome/core/application.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #include "esphome/components/network/util.h"
 
@@ -8,6 +10,7 @@
 #include <lwip/def.h>
 
 #include <atomic>
+#include <cinttypes>
 #include <cstdio>
 
 #include "zboss_ncp_api.h"
@@ -24,6 +27,7 @@ static ZbossNcpComponent *s_instance = nullptr;
 // ZBOSS task runs at 5 and must stay above this one.
 static constexpr uint32_t NCP_TASK_STACK = 8192;
 static constexpr UBaseType_t NCP_TASK_PRIORITY = 1;
+static constexpr uint32_t RADIO_READY_TIMEOUT_MS = 5000;
 
 bool ZbossNcpComponent::network_up_hook_() { return s_network_up.load(std::memory_order_relaxed); }
 
@@ -54,17 +58,40 @@ void ZbossNcpComponent::setup() {
   hooks.use_wifi = this->use_wifi_;
   ncp_host_set_hooks(&hooks);
 
+  ESP_LOGI(TAG, "setup: starting NCP task at %" PRIu32 " ms", millis());
   if (xTaskCreate(&ZbossNcpComponent::task_, "zboss_ncp", NCP_TASK_STACK, nullptr, NCP_TASK_PRIORITY, nullptr) !=
       pdPASS) {
     ESP_LOGE(TAG, "Could not start the NCP task");
     this->mark_failed();
     return;
   }
+
+  // Upstream's order: Zigbee stack up and coexistence on, then WiFi starts.
+  // This component sets up before WiFi (priority BUS), so holding setup()
+  // here keeps ESPHome from starting WiFi while the 802.15.4 radio
+  // initialises (that race hangs in wifi_hw_start). Normally ~50 ms.
+  const uint32_t start = millis();
+  while (!zboss_ncp_radio_ready() && millis() - start < RADIO_READY_TIMEOUT_MS) {
+    App.feed_wdt();
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+  if (zboss_ncp_radio_ready()) {
+    ESP_LOGI(TAG, "Zigbee radio ready after %" PRIu32 " ms (at %" PRIu32 " ms)", millis() - start, millis());
+  } else {
+    ESP_LOGW(TAG, "Zigbee stack not up after %" PRIu32 " ms; continuing", millis() - start);
+  }
   if (this->version_sensor_ != nullptr)
     this->version_sensor_->publish_state(zboss_ncp_version());
 }
 
-void ZbossNcpComponent::loop() { s_network_up.store(network::is_connected(), std::memory_order_relaxed); }
+void ZbossNcpComponent::loop() {
+  const bool up = network::is_connected();
+  s_network_up.store(up, std::memory_order_relaxed);
+  if (up && this->use_wifi_ && !this->coex_reapplied_) {
+    ncp_host_reapply_coex();
+    this->coex_reapplied_ = true;
+  }
+}
 
 void ZbossNcpComponent::update() {
   ncp_status_t st;

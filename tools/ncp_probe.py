@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Read-only probe of a ZBOSS NCP over TCP: version, joined, channel, PAN ids.
 
-usage: ncp_probe.py <host> [port]
+usage: ncp_probe.py <host> [port] [--reset]
 Framing (CRC tables, build_request) from tostmann/esp-coordinator test/
-getset_ext_pan_check.py (MIT). Sends only GET_* requests; changes nothing.
+getset_ext_pan_check.py (MIT). Without --reset it sends only GET_* requests.
 Disconnect Zigbee2MQTT/ZHA first: the NCP serves one host at a time.
+
+--reset sends NCP_RESET with option 0: a plain restart that keeps the
+network and clears the boot guard (the way out of safe mode, where every
+other command answers GENERIC_BLOCKED). Options 1/2 (erase NVRAM / factory
+reset) are deliberately not offered.
 """
 import socket
 import sys
@@ -110,14 +115,26 @@ def txn(sock, cmd_id, tsn):
 
 
 def main():
-    host = sys.argv[1]
-    port = int(sys.argv[2]) if len(sys.argv) > 2 else 6638
+    global _seq
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    reset = "--reset" in sys.argv
+    host = args[0]
+    port = int(args[1]) if len(args) > 1 else 6638
     sock = socket.create_connection((host, port), timeout=5)
     boot = read_frames(sock, 1.5)
     for f in boot:
         if not f[5] & 0x01:
             send_ack(sock, f)
     print(f"connected, {len(boot)} boot frame(s)")
+    if reset:
+        # NCP_RESET option 0: plain restart, network kept, boot guard cleared.
+        _seq = 1
+        sock.sendall(build_request(0x0002, payload=b"\x00", tsn=0x30, seq=_seq))
+        got = [f for f in read_frames(sock, 2.0) if not f[5] & 0x01]
+        print("NCP_RESET sent (option 0: restart, network kept);",
+              "answered" if got else "no answer (restarting)")
+        sock.close()
+        return
     checks = [
         ("module version", 0x0001, lambda b: "fw %d.%d.%d.%d stack %d.%d.%d.%d proto %d.%d.%d.%d" % (*b[0:4][::-1], *b[4:8][::-1], *b[8:12][::-1])),
         ("joined", 0x0014, lambda b: str(bool(b[0]))),
