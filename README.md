@@ -10,9 +10,11 @@ with only small changes. ESPHome provides everything around it: WiFi or
 Ethernet, **WireGuard**, OTA, logging, the native API and diagnostic sensors.
 The host connects to the NCP over TCP.
 
-> **Status: proof of concept.** It compiles (ESPHome 2026.10.2, ESP-IDF 5.5.6,
-> esp-zigbee-lib 1.6) for WiFi and for W5500 Ethernet. It has **not yet run on
-> hardware**.
+> **Status: proof of concept.** Builds with ESPHome 2026.10.2 (ESP-IDF 5.5.6,
+> esp-zigbee-lib 1.6) for WiFi and for W5500 Ethernet. Runs on an ESP32-C6 over
+> WiFi with Zigbee2MQTT (`adapter: zboss`, TCP): the network taken over from a
+> USB stick (`tools/migrate_stick.py`), devices switch. Not yet tested:
+> WireGuard, Ethernet, UART, ZHA, network backup/restore.
 
 ## Use
 
@@ -90,6 +92,14 @@ esp-zigbee-lib 2.x) and `openthread`: one 802.15.4 stack per chip.
   reliable way to take a full backup.
 - Heap: upstream found the WiFi build tight. ESPHome and WireGuard add to it;
   static RAM is 42% (WiFi) / 27% (Ethernet), runtime still to be measured.
+
+## Tools
+
+- `tools/migrate_stick.py`: take over the Zigbee network of a stick running
+  tostmann/esp-coordinator (from an `esptool read_flash` dump of the same chip).
+- `tools/ncp_probe.py <host>`: read-only check over TCP (version, joined,
+  channel, PAN ids). It takes the NCP over from a connected Zigbee2MQTT/ZHA
+  for a moment, so stop the host first.
 
 ## Updating from upstream
 
