@@ -10,9 +10,15 @@ menu "Zigbee Network Co-processor"
             were dead and removed in code-review TRNPT-4. NCP_UART_TRANSPORT
             below is an independent, parallel implementation.)
 
+    config NCP_USB_TRANSPORT
+        bool "NCP host link on USB-Serial/JTAG"
+        default n
+        help
+            esphome: off. USB-Serial/JTAG belongs to ESPHome's logger.
+
     config NCP_UART_TRANSPORT
         bool "Additional NCP host link on UART1 (parallel to USB)"
-        default y
+        default n
         help
             Expose the same ZBOSS NCP frame stream on UART1 in parallel to
             USB-Serial/JTAG, for hosts like OpenWRT routers with a TTL serial

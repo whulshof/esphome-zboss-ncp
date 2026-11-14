@@ -4,7 +4,6 @@
 #include "esp_partition.h"
 #include "esp_timer.h"
 #include "app.h"
-#include "netcfg.h"
 #include "coordid.h"
 #include "boot_guard.h"
 #include "sdkconfig.h"
@@ -12,6 +11,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
+#include "nvs.h"
+#include "zboss_ncp_api.h"
 
 // NCP_RESET options 1/2 (NVRAM erase / factory reset) cannot erase flash
 // inline: any multi-sector flash erase while the 802.15.4 radio is active
@@ -37,43 +38,23 @@ static void handle_pending_erase(void)
             ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_FAT, "zb_storage");
         if (zb) esp_partition_erase_range(zb, 0, zb->size);
     }
-    if (options == 1) {
-        // Feature 1: options==1 erases only zb_storage; the coordid "formed"
-        // marker in the nvs partition would survive and later mis-fire the
-        // silent-wipe alarm on the next factory-blank boot, even though THIS
-        // reset was intentional. Drop the marker. (options==2 erases the whole
-        // nvs partition below, taking the coordid namespace with it — no action
-        // needed there.) NVS is not yet initialized here (app::init runs later),
-        // so bring it up just to clear, then deinit to leave the existing
-        // ordering intact for app::init's own nvs_flash_init().
-        if (nvs_flash_init() == ESP_OK) {
-            coordid_clear();
-            nvs_flash_deinit();
-        }
+    // esphome: NVS belongs to ESPHome and is already mounted when the NCP
+    // starts, so it is never deinit'd or erased here. The NCP's own NVS half
+    // (the part a network backup carries) is the separate partition
+    // "zb_nvs"; a factory reset (options 2) erases that one, plus the two
+    // namespaces the firmware keeps in ESPHome's NVS.
+    if (options == 1 || options == 2) {
+        coordid_clear();
     }
     if (options == 2) {
-        // wifi-coex: a factory reset must NOT deprovision the WiFi STA creds.
-        // The raw erase below wipes the whole nvs partition — on this variant
-        // that includes the "netcfg" namespace, and a creds-less boot lands in
-        // Mode A (Improv-only, no WiFi, no TCP): a z2m factory reset over TCP
-        // would permanently cut its own link, recoverable only by USB
-        // re-provisioning. Factory reset means "forget the ZIGBEE network",
-        // so: lift the creds out, erase, put them back. Best-effort — if NVS
-        // can't be read (corrupt), the erase still proceeds (matching the old
-        // behavior) and the device falls back to Mode A provisioning.
-        char ssid[NETCFG_SSID_MAXLEN] = {0};
-        char psk[NETCFG_PSK_MAXLEN]   = {0};
-        bool have_creds = false;
-        if (nvs_flash_init() == ESP_OK) {
-            have_creds = (netcfg_load(ssid, sizeof(ssid), psk, sizeof(psk)) == ESP_OK);
-            nvs_flash_deinit();   // drop cached page state before the raw erase
-        }
-        const esp_partition_t* nvs = esp_partition_find_first(
-            ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, "nvs");
-        if (nvs) esp_partition_erase_range(nvs, 0, nvs->size);
-        if (have_creds && nvs_flash_init() == ESP_OK) {
-            netcfg_persist(ssid, psk);
-            // leave NVS initialized — app::init's nvs_flash_init is a no-op then
+        const esp_partition_t* zbnvs = esp_partition_find_first(
+            ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, "zb_nvs");
+        if (zbnvs) esp_partition_erase_range(zbnvs, 0, zbnvs->size);
+        nvs_handle_t h;
+        if (nvs_open("restore_pend", NVS_READWRITE, &h) == ESP_OK) {
+            nvs_erase_all(h);
+            nvs_commit(h);
+            nvs_close(h);
         }
     }
 }
@@ -229,7 +210,9 @@ static void rf_switch_default_input(void)
 #endif
 #endif  // CONFIG_IDF_TARGET_ESP32C6
 
-extern "C" void app_main(void)
+// esphome: was app_main(). Called from the ESPHome component on a task of its
+// own; app::start() runs the NCP event pump and does not return.
+extern "C" void zboss_ncp_main(void)
 {
     // Reset-cause forensics (free under LOG_NONE): some boards' eFuses
     // suppress the ROM's rst:0x banner, making brownouts, panics and
@@ -247,6 +230,11 @@ extern "C" void app_main(void)
     rf_switch_default_input();
 #endif
 #endif  // CONFIG_IDF_TARGET_ESP32C6
-    ESP_ERROR_CHECK(app::init());
-    ESP_ERROR_CHECK(app::start());
+    // esphome: no abort() on failure -- that would boot-loop the whole device,
+    // OTA and API included. Log and leave the rest of the firmware running.
+    esp_err_t err = app::init();
+    if (err == ESP_OK) {
+        err = app::start();
+    }
+    ESP_LOGE("BOOT", "NCP stopped: %s", esp_err_to_name(err));
 }
