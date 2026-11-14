@@ -103,10 +103,21 @@ esp-zigbee-lib 2.x) and `openthread`: one 802.15.4 stack per chip.
 
 ## Updating from upstream
 
-The first commit holds upstream's `main/` (wifi-coex `8fde59c`, v1.5.81-coex)
-without Improv, the info page, `wifi_coex.cpp` and `netcfg.cpp`. Every change
-since is marked `// esphome:` in the code. To update: copy the new upstream
-files over `zboss_ncp_idf/src/`, then reapply
-`git diff <first commit> -- components/zboss_ncp/zboss_ncp_idf/src` (the files
-added here, such as `ncp_host.cpp`, `netcfg.cpp`, `version.h` and
-`zboss_ncp_api.h`, stay as they are).
+The firmware follows tostmann/esp-coordinator's `wifi-coex` branch (the one
+with the TCP server; tostmann syncs `master` into it) through a vendor branch:
+
+- branch `upstream` holds only upstream's files, in this repo's layout
+  (`components/zboss_ncp/zboss_ncp_idf/`), without the parts ESPHome replaces
+  (Improv, info page, `wifi_coex.cpp`, `netcfg.cpp`, build files);
+- `main` = `upstream` + the changes marked `// esphome:` + files of its own
+  (`ncp_host.cpp`, `netcfg.cpp` stub, `version.h`, `zboss_ncp_api.h`, the
+  ESPHome component).
+
+```bash
+tools/sync_upstream.sh            # fetch wifi-coex, commit it on 'upstream', merge into the current branch
+```
+
+Git merges upstream's changes over ours; only lines both sides changed
+conflict. The script also prints upstream's library versions and version
+number (`idf_component.yml` and `version.h` are ours, update them by hand) and
+the files upstream added. Then build an example to check.
